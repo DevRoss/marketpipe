@@ -1,0 +1,23 @@
+{
+  "binance": {
+    "public_url": "wss://fstream.binance.com/public/stream",
+    "market_url": "wss://fstream.binance.com/market/stream",
+    "symbols": ["BTCUSDT", "ETHUSDT"],
+    "channels": ["bookTicker", "aggTrade"],
+    "streams_per_connection": 128
+  },
+  "websocket": {
+    "dial_timeout": "10s",
+    "ping_interval": "30s",
+    "read_timeout": "90s",
+    "write_timeout": "5s",
+    "max_age": "23h50m",
+    "backoff_min": "1s",
+    "backoff_max": "30s",
+    "dial_interval": "250ms",
+    "read_limit": 1048576
+  },
+  "zmq": {"endpoint": "tcp://127.0.0.1:5556", "send_hwm": 10000},
+  "queue_capacity": 32768,
+  "http_listen": "127.0.0.1:8080"
+}

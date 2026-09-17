@@ -1,0 +1,5 @@
+{
+  "binance": {"symbols": ["BTCUSDT", "ETHUSDT"], "channels": ["bookTicker", "aggTrade"]},
+  "zmq": {"endpoint": "tcp://0.0.0.0:5556", "send_hwm": 10000},
+  "http_listen": "0.0.0.0:8080"
+}
