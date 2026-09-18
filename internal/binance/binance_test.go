@@ -68,3 +68,34 @@ func BenchmarkDecodeQuote(b *testing.B) {
 		}
 	}
 }
+
+func TestRawTradeRouteAndDecode(t *testing.T) {
+	wire := `{"e":"trade","E":1700000000001,"T":1700000000000,"s":"BTCUSDT","t":8089430918,"p":"76248.10","q":"0.001","X":"MARKET","m":false,"st":1}`
+	c := Defaults()
+	c.Symbols = []string{"BTCUSDT"}
+	c.Channels = []string{"trade"}
+	a := Adapter{Config: c}
+	specs, err := a.Specs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(specs[0].URL, "/public/stream?streams=btcusdt@trade") {
+		t.Fatal(specs[0].URL)
+	}
+	e, err := specs[0].Decode([]byte(wire), 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Kind != "trade" || e.SourceID != "8089430918" || e.Trade.Side != "buy" || e.Trade.FirstTradeID != e.Trade.LastTradeID || e.TradeTimeMS != 1700000000000 {
+		t.Fatalf("wrong raw trade %+v", e)
+	}
+	wire = strings.Replace(wire, `"T":1700000000000,`, "", 1)
+	wire = strings.Replace(wire, `"t":8089430918,`, `"t":8089430918,"T":1700000000000,`, 1)
+	e, err = specs[0].Decode([]byte(wire), 123)
+	if err != nil || e.SourceID != "8089430918" || e.TradeTimeMS != 1700000000000 {
+		t.Fatalf("case-sensitive t/T mapping: %+v %v", e, err)
+	}
+	if _, err := specs[0].Decode([]byte(tradeFixture), 123); err == nil {
+		t.Fatal("accepted aggregated trade on raw route")
+	}
+}

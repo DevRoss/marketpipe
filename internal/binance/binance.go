@@ -46,7 +46,7 @@ func (c *Config) Validate() error {
 	}
 	seen = map[string]bool{}
 	for _, c := range c.Channels {
-		if (c != "bookTicker" && c != "aggTrade") || seen[c] {
+		if (c != "bookTicker" && c != "aggTrade" && c != "trade") || seen[c] {
 			return fmt.Errorf("invalid or duplicate channel %q", c)
 		}
 		seen[c] = true
@@ -105,6 +105,8 @@ func (a *Adapter) Specs() ([]stream.Spec, error) {
 					expected := "quote"
 					if ch == "aggTrade" {
 						expected = "agg_trade"
+					} else if ch == "trade" {
+						expected = "trade"
 					}
 					if !allowed[e.Symbol] || e.Kind != expected {
 						return e, errors.New("event does not match configured subscription")
@@ -122,6 +124,7 @@ type header struct {
 	Symbol     string `json:"s"`
 	EventMS    int64  `json:"E"`
 	TradeMS    int64  `json:"T"`
+	TradeID    int64  `json:"t"` // absorb exact lowercase key; encoding/json otherwise matches T
 	SymbolType int    `json:"st"`
 }
 
@@ -161,6 +164,28 @@ func Decode(b []byte, recv int64) (market.Event, error) {
 		e.Kind = "quote"
 		e.SourceID = strconv.FormatInt(*q.Update, 10)
 		e.Quote = &market.Quote{BidPrice: q.Bid, BidQty: q.BidQty, AskPrice: q.Ask, AskQty: q.AskQty}
+	case "trade":
+		var t struct {
+			ID            *int64 `json:"t"`
+			TradeMS       int64  `json:"T"` // prevent uppercase T from overwriting ID
+			Price         string `json:"p"`
+			Qty           string `json:"q"`
+			Maker         *bool  `json:"m"`
+			ExecutionType string `json:"X"`
+		}
+		if err := json.Unmarshal(b, &t); err != nil {
+			return e, err
+		}
+		if t.ID == nil || *t.ID < 0 || t.Maker == nil || !decimal(t.Price) || !decimal(t.Qty) {
+			return e, errors.New("invalid raw trade fields")
+		}
+		side := "buy"
+		if *t.Maker {
+			side = "sell"
+		}
+		e.Kind = "trade"
+		e.SourceID = strconv.FormatInt(*t.ID, 10)
+		e.Trade = &market.Trade{Price: t.Price, Qty: t.Qty, Side: side, FirstTradeID: e.SourceID, LastTradeID: e.SourceID, ExecutionType: t.ExecutionType}
 	case "aggTrade":
 		var t struct {
 			ID    *int64 `json:"a"`

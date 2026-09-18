@@ -2,7 +2,14 @@
 
 一个可以编译运行、便于扩展的行情网关。首先接入币安 **USDⓈ-M（U 本位合约）**，通过标准 ZeroMQ PUB/SUB 将行情发给不同语言、不同进程的应用。
 
-当前实现买卖一报价 `bookTicker` 和聚合成交 `aggTrade`。后者是交易所聚合成交，不是每一笔原始撮合成交。不包含下单、L2 本地订单簿、REST 补历史、持久化、动态订阅或双活无缝切换。默认接入 BTCUSDT / ETHUSDT，可修改配置增加交易对。
+当前实现买卖一报价 `bookTicker`、原始逐笔成交 `trade` 和聚合成交 `aggTrade`。
+后者是交易所聚合成交，不是每一笔原始撮合成交。不包含下单、L2 本地订单簿、REST 补历史、持久化、动态订阅或双活无缝切换。默认接入 BTCUSDT / ETHUSDT，可修改配置增加交易对。
+
+需要与 Tardis 原始逐笔成交模型一致时，显式配置 `"channels": ["bookTicker", "trade"]`。
+`trade` 使用 `/public/stream` 的 `@trade`，输出 kind=`trade`，source_id 为 `t`，
+`trade_time_ms` 为 `T`，`trade.execution_type` 保留 Binance `X`。
+`NA` 等零价/零量占位及保险基金/ADL 事件由消费者按研究契约排除，不能误判为断流。
+原来的 `aggTrade` 默认配置和 `agg_trade` 协议不变。
 
 ## 快速运行
 
@@ -97,7 +104,7 @@ type Sink interface {
 
 ## 连接稳定性
 
-- 报价连接 `/public/stream`，成交连接 `/market/stream`，不混用端点。
+- 报价和原始逐笔成交连接 `/public/stream`，聚合成交连接 `/market/stream`，不混用端点。
 - 每连接默认最多 128 个 stream，低于交易所文档的 1024 上限。当前每个 channel 单独分组，共 `2 × ceil(交易对数 / 128)` 条连接（两类都启用时）。过长 URL 会在启动前报错，可减小分片大小。
 - 每条连接一个读取循环，一个控制循环；不为每个 tick 新建 goroutine。
 - 收到服务端 Ping 回应原始 payload 的 Pong；同时每 30 秒发 Ping，读超时 90 秒。握手和控制帧写入也有超时。

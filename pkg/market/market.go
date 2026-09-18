@@ -16,11 +16,12 @@ type Quote struct {
 }
 
 type Trade struct {
-	Price        string `json:"price"`
-	Qty          string `json:"qty"`
-	Side         string `json:"side"` // aggressor side: buy or sell
-	FirstTradeID string `json:"first_trade_id"`
-	LastTradeID  string `json:"last_trade_id"`
+	Price         string `json:"price"`
+	Qty           string `json:"qty"`
+	Side          string `json:"side"` // aggressor side: buy or sell
+	FirstTradeID  string `json:"first_trade_id"`
+	LastTradeID   string `json:"last_trade_id"`
+	ExecutionType string `json:"execution_type,omitempty"` // raw trade X; preserve off-book types
 }
 
 // Event is one update, NOT a synthetic merge of asynchronous quote/trade streams.
