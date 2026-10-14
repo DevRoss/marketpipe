@@ -26,9 +26,9 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// Run signals ready only once the socket is bound. Errors are fatal: a supervisor
+// run signals ready only once the socket is bound. Errors are fatal: a supervisor
 // should restart the process, rather than repeatedly losing multipart framing.
-func Run(ctx context.Context, c Config, in <-chan market.Event, s *monitor.Stats, ready chan<- error) (result error) {
+func run(ctx context.Context, c Config, inputs map[string]<-chan market.Event, stats *monitor.Stats, ready chan<- error) (result error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	notified := false
@@ -65,8 +65,17 @@ func Run(ctx context.Context, c Config, in <-chan market.Event, s *monitor.Stats
 	if err := pub.Bind(c.Endpoint); err != nil {
 		return err
 	}
-	s.PublisherUp.Store(true)
-	defer s.PublisherUp.Store(false)
+	// Copy the input map before disabling closed queues; callers retain ownership.
+	queues := make(map[string]<-chan market.Event, len(inputs))
+	for kind, in := range inputs {
+		queues[kind] = in
+		stats.Pipelines[kind].PublisherUp.Store(true)
+	}
+	defer func() {
+		for kind := range inputs {
+			stats.Pipelines[kind].PublisherUp.Store(false)
+		}
+	}()
 	ready <- nil
 	notified = true
 	for {
@@ -74,25 +83,22 @@ func Run(ctx context.Context, c Config, in <-chan market.Event, s *monitor.Stats
 		if ctx.Err() != nil {
 			return nil
 		}
-		select {
-		case <-ctx.Done():
+		e, ok := next(ctx, queues)
+		if !ok {
 			return nil
-		case e, ok := <-in:
-			if !ok {
-				return nil
-			}
-			b, err := json.Marshal(e)
-			if err != nil {
-				s.PublisherErrors.Add(1)
-				return err
-			}
-			// PUB drops for a subscriber whose HWM is full, and never waits for it.
-			// Success means accepted by libzmq, NOT acknowledged by subscribers.
-			if _, err := pub.SendMessage(e.Topic(), b); err != nil {
-				s.PublisherErrors.Add(1)
-				return err
-			}
-			s.Sent.Add(1)
 		}
+		s := stats.Pipelines[e.Kind]
+		b, err := json.Marshal(e)
+		if err != nil {
+			s.PublisherErrors.Add(1)
+			return err
+		}
+		// PUB drops for a subscriber whose HWM is full, and never waits for it.
+		// Success means accepted by libzmq, NOT acknowledged by subscribers.
+		if _, err := pub.SendMessage(e.Topic(), b); err != nil {
+			s.PublisherErrors.Add(1)
+			return err
+		}
+		s.Sent.Add(1)
 	}
 }

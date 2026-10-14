@@ -2,7 +2,7 @@
 import { Subscriber } from "zeromq";
 const sub = new Subscriber({ receiveHighWaterMark: 10000, linger: 0 });
 sub.connect(process.env.ZMQ_ENDPOINT || "tcp://127.0.0.1:5556");
-sub.subscribe("md.v1.binance.usdm.", "md.v1.system.");
+sub.subscribe(process.env.ZMQ_TOPIC ?? "md.v1.binance.usdm.BTCUSDT.quote|");
 const last = new Map();
 process.on("SIGINT", () => sub.close());
 try {

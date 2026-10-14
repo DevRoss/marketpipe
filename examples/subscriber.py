@@ -11,7 +11,8 @@ import zmq
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--endpoint", default="tcp://127.0.0.1:5556")
-    parser.add_argument("--topic", default="md.v1.binance.usdm.")
+    parser.add_argument("--topic", default="md.v1.binance.usdm.BTCUSDT.quote|",
+                        help="ZeroMQ topic prefix (empty = all)")
     args = parser.parse_args()
     context = zmq.Context()
     sub = context.socket(zmq.SUB)
@@ -19,13 +20,12 @@ def main():
     sub.setsockopt(zmq.RCVHWM, 10000)
     sub.setsockopt(zmq.MAXMSGSIZE, 1024 * 1024)
     sub.setsockopt_string(zmq.SUBSCRIBE, args.topic)
-    sub.setsockopt_string(zmq.SUBSCRIBE, "md.v1.system.")
     sub.connect(args.endpoint)
     last = {}
     try:
         while True:
             if not sub.poll(5000):
-                print("No messages for 5s; gateway may be down", file=sys.stderr)
+                print("No messages on selected channel for 5s; check heartbeat or HTTP health", file=sys.stderr)
                 continue
             topic, payload = sub.recv_multipart()
             event = json.loads(payload)

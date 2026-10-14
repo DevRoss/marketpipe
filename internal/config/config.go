@@ -22,7 +22,7 @@ type Config struct {
 }
 
 func Load(path string) (Config, error) {
-	c := Config{Binance: binance.Defaults(), WebSocket: stream.Defaults(), ZMQ: publisher.Config{Endpoint: "tcp://127.0.0.1:5556", SendHWM: 10000}, QueueCapacity: 32768, HTTPListen: "127.0.0.1:8080"}
+	c := Config{Binance: binance.Defaults(), WebSocket: stream.Defaults(), ZMQ: publisher.Defaults(), QueueCapacity: 32768, HTTPListen: "127.0.0.1:8080"}
 	f, err := os.Open(path)
 	if err != nil {
 		return c, err
@@ -53,4 +53,20 @@ func Load(path string) (Config, error) {
 		return c, fmt.Errorf("http_listen: %w", err)
 	}
 	return c, nil
+}
+
+// Kinds returns the enabled downstream lanes, plus the independent heartbeat.
+func (c Config) Kinds() []string {
+	kinds := make([]string, 0, len(c.Binance.Channels)+1)
+	for _, ch := range c.Binance.Channels {
+		switch ch {
+		case "bookTicker":
+			kinds = append(kinds, "quote")
+		case "trade":
+			kinds = append(kinds, "trade")
+		case "aggTrade":
+			kinds = append(kinds, "agg_trade")
+		}
+	}
+	return append(kinds, "heartbeat")
 }

@@ -18,7 +18,7 @@ import (
 
 func main() {
 	endpoint := flag.String("endpoint", "tcp://127.0.0.1:5556", "publisher address")
-	topic := flag.String("topic", "md.v1.binance.usdm.", "topic prefix (empty = all)")
+	topic := flag.String("topic", "md.v1.binance.usdm.BTCUSDT.quote|", "ZeroMQ topic prefix (empty = all)")
 	flag.Parse()
 	if err := run(*endpoint, *topic); err != nil {
 		log.Fatal(err)
@@ -41,7 +41,7 @@ func run(endpoint, topic string) error {
 	for _, f := range []func() error{
 		func() error { return sub.SetLinger(0) }, func() error { return sub.SetRcvhwm(10000) },
 		func() error { return sub.SetRcvtimeo(500 * time.Millisecond) }, func() error { return sub.SetMaxmsgsize(1 << 20) },
-		func() error { return sub.SetSubscribe(topic) }, func() error { return sub.SetSubscribe("md.v1.system.") },
+		func() error { return sub.SetSubscribe(topic) },
 		func() error { return sub.Connect(endpoint) },
 	} {
 		if err := f(); err != nil {
@@ -68,7 +68,7 @@ func run(endpoint, topic string) error {
 		if err != nil {
 			if zmq.AsErrno(err) == zmq.Errno(syscall.EAGAIN) {
 				if !warned && time.Since(lastMessage) > 5*time.Second {
-					log.Print("no messages for 5 seconds: gateway may be down")
+					log.Print("no messages on selected channel for 5 seconds; check heartbeat or HTTP health")
 					warned = true
 				}
 				continue

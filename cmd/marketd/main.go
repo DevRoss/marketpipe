@@ -42,12 +42,12 @@ func run(path string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stats := monitor.New()
-	h := hub.New(c.QueueCapacity, stats)
+	h := hub.NewRouter(c.QueueCapacity, c.Kinds(), stats)
 	pubCtx, cancelPub := context.WithCancel(context.Background())
 	defer cancelPub()
 	ready := make(chan error, 1)
 	pubDone := make(chan error, 1)
-	go func() { pubDone <- publisher.Run(pubCtx, c.ZMQ, h.Events(), stats, ready) }()
+	go func() { pubDone <- publisher.RunAll(pubCtx, c.ZMQ, h.Inputs(), stats, ready) }()
 	if err := <-ready; err != nil {
 		<-pubDone
 		return fmt.Errorf("publisher start: %w", err)
@@ -126,6 +126,6 @@ func run(path string) error {
 		server.Close()
 	}
 	<-httpDone
-	slog.Info("marketd stopped", "received", stats.Received.Load(), "ingress_dropped", stats.Dropped.Load(), "publish_calls", stats.Sent.Load())
+	slog.Info("marketd stopped", "received", stats.TotalReceived(), "ingress_dropped", stats.TotalDropped(), "publish_calls", stats.TotalSent())
 	return err
 }
