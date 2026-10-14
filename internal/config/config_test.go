@@ -31,12 +31,12 @@ func TestChannelConfig(t *testing.T) {
 		body  string
 		valid bool
 	}{
-		{`{"zmq":{"endpoint":"tcp://127.0.0.1:5556"}}`, false},
+		{`{"zmq":{"endpoint":"tcp://127.0.0.1:5556"}}`, true},
 		{`{"zmq":{"endpoints":{"trade":"tcp://127.0.0.1:5556"}}}`, false},
 		{`{"zmq":{"endpoints":{"typo":"tcp://127.0.0.1:5560"}}}`, false},
 		{`{"zmq":{"endpoints":null}}`, false},
 		{`{"zmq":{"send_hwm":0}}`, false},
-		{`{"zmq":{"endpoints":{"quote":"ipc:///tmp/quotes.sock"}}}`, true},
+		{`{"zmq":{"endpoint":"ipc:///tmp/quotes.sock"}}`, true},
 		{`{"binance":{"channels":["bookTicker","trade","aggTrade"]}}`, true},
 	} {
 		p := filepath.Join(t.TempDir(), "config.json")

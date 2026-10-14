@@ -14,11 +14,11 @@ import (
 )
 
 type Config struct {
-	Binance       binance.Config    `json:"binance"`
-	WebSocket     stream.Config     `json:"websocket"`
-	ZMQ           publisher.Outputs `json:"zmq"`
-	QueueCapacity int               `json:"queue_capacity"`
-	HTTPListen    string            `json:"http_listen"`
+	Binance       binance.Config   `json:"binance"`
+	WebSocket     stream.Config    `json:"websocket"`
+	ZMQ           publisher.Config `json:"zmq"`
+	QueueCapacity int              `json:"queue_capacity"`
+	HTTPListen    string           `json:"http_listen"`
 }
 
 func Load(path string) (Config, error) {
@@ -45,11 +45,6 @@ func Load(path string) (Config, error) {
 	}
 	if err := c.ZMQ.Validate(); err != nil {
 		return c, err
-	}
-	for _, kind := range c.Kinds() {
-		if c.ZMQ.Endpoints[kind] == "" {
-			return c, fmt.Errorf("missing zmq.endpoints.%s", kind)
-		}
 	}
 	if c.QueueCapacity < 1 || c.QueueCapacity > 1000000 {
 		return c, errors.New("queue_capacity must be in 1..1000000")

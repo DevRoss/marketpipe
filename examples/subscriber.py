@@ -10,10 +10,9 @@ import zmq
 
 def main():
     parser = argparse.ArgumentParser()
-    endpoints = {"quote": 5556, "trade": 5557, "agg_trade": 5558, "heartbeat": 5559}
-    parser.add_argument("--kind", choices=endpoints, default="quote")
-    parser.add_argument("--endpoint", help="override the selected kind endpoint")
-    parser.add_argument("--topic", default="md.v1.")
+    parser.add_argument("--endpoint", default="tcp://127.0.0.1:5556")
+    parser.add_argument("--topic", default="md.v1.binance.usdm.BTCUSDT.quote|",
+                        help="ZeroMQ topic prefix (empty = all)")
     args = parser.parse_args()
     context = zmq.Context()
     sub = context.socket(zmq.SUB)
@@ -21,7 +20,7 @@ def main():
     sub.setsockopt(zmq.RCVHWM, 10000)
     sub.setsockopt(zmq.MAXMSGSIZE, 1024 * 1024)
     sub.setsockopt_string(zmq.SUBSCRIBE, args.topic)
-    sub.connect(args.endpoint or f"tcp://127.0.0.1:{endpoints[args.kind]}")
+    sub.connect(args.endpoint)
     last = {}
     try:
         while True:

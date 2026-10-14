@@ -92,7 +92,7 @@ func run(path string) error {
 			}
 		}
 	}()
-	slog.Info("marketd started", "zmq", c.ZMQ.Endpoints, "http", c.HTTPListen)
+	slog.Info("marketd started", "zmq", c.ZMQ.Endpoint, "http", c.HTTPListen)
 	pubExited := false
 	select {
 	case <-ctx.Done():

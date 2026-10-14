@@ -66,19 +66,17 @@ func TestPythonEndToEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 	kinds := []string{"quote", "trade", "agg_trade", "heartbeat"}
-	outputs := Outputs{Endpoints: make(map[string]string), SendHWM: 100}
-	for _, kind := range kinds {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		endpoint := "tcp://" + ln.Addr().String()
-		ln.Close()
-		if os.Getenv("MARKETPIPE_TEST_TRANSPORT") == "ipc" {
-			endpoint = "ipc://" + filepath.Join(t.TempDir(), "pub.sock")
-		}
-		outputs.Endpoints[kind] = endpoint
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
+	endpoint := "tcp://" + ln.Addr().String()
+	ln.Close()
+	if os.Getenv("MARKETPIPE_TEST_TRANSPORT") == "ipc" {
+		endpoint = "ipc://" + filepath.Join(socketDir(t), "pub.sock")
+	}
+	outputs := Config{Endpoint: endpoint, SendHWM: 100}
+
 	stats := monitor.New()
 	h := hub.NewRouter(64, kinds, stats)
 	ready := make(chan error, 1)
@@ -131,15 +129,16 @@ func TestPythonEndToEnd(t *testing.T) {
 	code := `
 import json, sys, time, zmq
 c=zmq.Context(); poller=zmq.Poller(); sockets={}
-for kind,endpoint in zip(['quote','trade','agg_trade','heartbeat'],sys.argv[1:]):
+for kind in ['quote','trade','agg_trade','heartbeat']:
     s=c.socket(zmq.SUB); s.setsockopt(zmq.LINGER,0)
-    s.subscribe(''); s.connect(endpoint); poller.register(s,zmq.POLLIN); sockets[s]=kind
+    topic='md.v1.system.gateway.ALL.heartbeat|' if kind=='heartbeat' else 'md.v1.binance.usdm.BTCUSDT.'+kind+'|'
+    s.subscribe(topic); s.connect(sys.argv[1]); poller.register(s,zmq.POLLIN); sockets[s]=kind
 seen=set(); sessions=set(); last={}; instances=set(); deadline=time.monotonic()+7
 while time.monotonic()<deadline:
     for s,_ in poller.poll(500):
         frames=s.recv_multipart(); assert len(frames)==2
         topic,payload=frames; e=json.loads(payload); kind=sockets[s]
-        assert e['kind']==kind, (kind,e) # No topic filter: detect any cross-channel leak.
+        assert e['kind']==kind, (kind,e) # Topic filters must isolate types on the same endpoint.
         assert e['schema']==1 and topic.endswith(('.'+kind+'|').encode())
         assert isinstance(e['seq'],str) and isinstance(e['receive_time_ns'],str)
         seq=int(e['seq'])
@@ -158,12 +157,9 @@ while time.monotonic()<deadline:
 assert len(seen)==4 and len(sessions)>=2, (seen,sessions)
 assert len(instances)==1, instances
 for s in sockets: s.close()
-c.term(); print('PASS: four isolated endpoints, two-frame ZMTP, precision, sequence, shared instance, reconnect')
+c.term(); print('PASS: four topic subscriptions on one endpoint, two-frame ZMTP, precision, sequence, shared instance, reconnect')
 `
-	args := []string{"-c", code}
-	for _, kind := range kinds {
-		args = append(args, outputs.Endpoints[kind])
-	}
+	args := []string{"-c", code, outputs.Endpoint}
 	out, err := exec.CommandContext(pyctx, python, args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("Python subscriber: %v\n%s", err, out)

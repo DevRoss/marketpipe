@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,9 +46,8 @@ func TestGroupDrainAndCancel(t *testing.T) {
 			stats := monitor.New()
 			kinds := []string{"quote", "trade"}
 			h := hub.NewRouter(16, kinds, stats)
-			c := Outputs{Endpoints: map[string]string{}, SendHWM: 100}
+			c := Config{Endpoint: "ipc://" + filepath.Join(socketDir(t), "pub.sock"), SendHWM: 100}
 			for _, kind := range kinds {
-				c.Endpoints[kind] = "ipc://" + filepath.Join(socketDir(t), kind+".sock")
 				h.Emit(market.Event{Kind: kind})
 			}
 			ready, done := make(chan error, 1), make(chan error, 1)
@@ -78,17 +78,13 @@ func TestGroupDrainAndCancel(t *testing.T) {
 	}
 }
 
-func TestGroupPartialStartupFailure(t *testing.T) {
+func TestGroupStartupFailure(t *testing.T) {
 	if os.Getenv("MARKETPIPE_SKIP_ZMQ_INTEGRATION") == "1" {
 		t.Skip("native libzmq socket binding explicitly disabled")
 	}
 	stats := monitor.New()
 	h := hub.NewRouter(1, []string{"quote", "trade"}, stats)
-	// quote sorts first and binds; trade then fails on a nonexistent IPC directory.
-	c := Outputs{Endpoints: map[string]string{
-		"quote": "ipc://" + filepath.Join(socketDir(t), "quote.sock"),
-		"trade": "ipc://" + filepath.Join(socketDir(t), "missing", "trade.sock"),
-	}, SendHWM: 10}
+	c := Config{Endpoint: "ipc://" + filepath.Join(socketDir(t), "missing", "pub.sock"), SendHWM: 10}
 	ready, done := make(chan error, 1), make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -114,7 +110,7 @@ func TestGroupValidation(t *testing.T) {
 			case "inputs":
 				in = nil
 			case "endpoint":
-				delete(c.Endpoints, "quote")
+				c.Endpoint = ""
 			case "queue":
 				in["quote"] = nil
 			case "stats":
@@ -130,5 +126,62 @@ func TestGroupValidation(t *testing.T) {
 				t.Fatal("startup must report failure")
 			}
 		})
+	}
+}
+
+func TestNextDrainsClosedQueuesInOrder(t *testing.T) {
+	inputs := make(map[string]<-chan market.Event)
+	for _, kind := range []string{"quote", "trade", "agg_trade", "heartbeat"} {
+		ch := make(chan market.Event, 3)
+		for seq := uint64(1); seq <= 3; seq++ {
+			ch <- market.Event{Kind: kind, Seq: seq}
+		}
+		close(ch)
+		inputs[kind] = ch
+	}
+	last := make(map[string]uint64)
+	for {
+		e, ok := next(context.Background(), inputs)
+		if !ok {
+			break
+		}
+		if e.Seq != last[e.Kind]+1 {
+			t.Fatalf("reordered %s: %d", e.Kind, e.Seq)
+		}
+		last[e.Kind] = e.Seq
+	}
+	if len(last) != 4 {
+		t.Fatal(last)
+	}
+	for kind, seq := range last {
+		if seq != 3 {
+			t.Fatalf("%s not drained: %d", kind, seq)
+		}
+	}
+}
+
+func TestNextCancelWithBusyAndEmptyQueues(t *testing.T) {
+	for _, buffered := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		ch := make(chan market.Event, 1)
+		if buffered {
+			ch <- market.Event{Kind: "quote"}
+		}
+		done := make(chan error, 1)
+		if buffered {
+			cancel()
+		}
+		go func() {
+			_, ok := next(ctx, map[string]<-chan market.Event{"quote": ch})
+			if ok {
+				done <- fmt.Errorf("returned event after cancellation")
+				return
+			}
+			done <- nil
+		}()
+		cancel()
+		if err := awaitResult(t, done); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

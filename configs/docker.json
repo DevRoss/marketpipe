@@ -10,12 +10,7 @@
     ]
   },
   "zmq": {
-    "endpoints": {
-      "quote": "tcp://0.0.0.0:5556",
-      "trade": "tcp://0.0.0.0:5557",
-      "agg_trade": "tcp://0.0.0.0:5558",
-      "heartbeat": "tcp://0.0.0.0:5559"
-    },
+    "endpoint": "tcp://0.0.0.0:5556",
     "send_hwm": 10000
   },
   "http_listen": "0.0.0.0:8080"

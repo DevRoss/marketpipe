@@ -24,12 +24,7 @@
     "read_limit": 1048576
   },
   "zmq": {
-    "endpoints": {
-      "quote": "tcp://127.0.0.1:5556",
-      "trade": "tcp://127.0.0.1:5557",
-      "agg_trade": "tcp://127.0.0.1:5558",
-      "heartbeat": "tcp://127.0.0.1:5559"
-    },
+    "endpoint": "tcp://127.0.0.1:5556",
     "send_hwm": 10000
   },
   "queue_capacity": 32768,

@@ -17,18 +17,9 @@ import (
 )
 
 func main() {
-	kind := flag.String("kind", "quote", "quote, trade, agg_trade or heartbeat")
-	endpoint := flag.String("endpoint", "", "publisher address (default selected by kind)")
-	topic := flag.String("topic", "md.v1.", "topic prefix within the selected kind (empty = all)")
+	endpoint := flag.String("endpoint", "tcp://127.0.0.1:5556", "publisher address")
+	topic := flag.String("topic", "md.v1.binance.usdm.BTCUSDT.quote|", "ZeroMQ topic prefix (empty = all)")
 	flag.Parse()
-	endpoints := map[string]string{"quote": "tcp://127.0.0.1:5556", "trade": "tcp://127.0.0.1:5557", "agg_trade": "tcp://127.0.0.1:5558", "heartbeat": "tcp://127.0.0.1:5559"}
-	address, ok := endpoints[*kind]
-	if !ok {
-		log.Fatalf("unknown kind %q", *kind)
-	}
-	if *endpoint == "" {
-		*endpoint = address
-	}
 	if err := run(*endpoint, *topic); err != nil {
 		log.Fatal(err)
 	}
