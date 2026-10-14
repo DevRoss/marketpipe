@@ -1,8 +1,11 @@
 // npm install zeromq; node examples/subscriber.mjs
 import { Subscriber } from "zeromq";
+const endpoints = { quote: 5556, trade: 5557, agg_trade: 5558, heartbeat: 5559 };
+const kind = process.env.ZMQ_KIND || "quote";
+if (!Object.hasOwn(endpoints, kind)) throw new Error(`Unknown kind: ${kind}`);
 const sub = new Subscriber({ receiveHighWaterMark: 10000, linger: 0 });
-sub.connect(process.env.ZMQ_ENDPOINT || "tcp://127.0.0.1:5556");
-sub.subscribe("md.v1.binance.usdm.", "md.v1.system.");
+sub.connect(process.env.ZMQ_ENDPOINT || `tcp://127.0.0.1:${endpoints[kind]}`);
+sub.subscribe(process.env.ZMQ_TOPIC ?? "md.v1.");
 const last = new Map();
 process.on("SIGINT", () => sub.close());
 try {

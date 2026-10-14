@@ -24,10 +24,10 @@ docker compose logs -f marketd
 
 ```bash
 python -m pip install -r examples/requirements.txt
-python examples/subscriber.py
+python examples/subscriber.py --kind quote
 ```
 
-默认只映射本机 `5556`（ZeroMQ）与 `8080`（健康检查）。容器里的监听地址为 `0.0.0.0`，宿主机映射为 `127.0.0.1`。修改 `configs/docker.json` 后用 `docker compose restart marketd` 重启生效。
+默认只映射本机 `5556–5559`（各类型独立 ZeroMQ 出口）与 `8080`（健康检查）。容器里的监听地址为 `0.0.0.0`，宿主机映射为 `127.0.0.1`。修改 `configs/docker.json` 后用 `docker compose restart marketd` 重启生效。
 
 ### Linux / macOS 原生
 
@@ -49,7 +49,7 @@ go build -o bin/marketd ./cmd/marketd
 Go 订阅端：
 
 ```bash
-go run ./cmd/subscriber -endpoint tcp://127.0.0.1:5556 \
+go run ./cmd/subscriber -kind quote \
   -topic 'md.v1.binance.usdm.BTCUSDT.quote|'
 ```
 
@@ -57,32 +57,66 @@ Node.js 订阅端：
 
 ```bash
 npm install zeromq
-node examples/subscriber.mjs
+ZMQ_KIND=agg_trade node examples/subscriber.mjs
 ```
 
 跨平台指使用标准 ZMTP 协议互通：Linux/macOS/Windows 上的 Python、Node.js、C++、C# 等应用均可使用对应 ZeroMQ 库连接。Go 网关推荐部署在 Linux，macOS 可本机构建；Windows 可用 Docker Desktop/WSL2。Windows 原生 Go 网关需要自行配置 CGO 和 libzmq，未在本次交付中验证。Node 示例也未在本次环境运行。
 
 跨主机时，将发布端改为 `tcp://0.0.0.0:5556`，客户端连 `tcp://服务器IP:5556`，并相应调整 Docker 端口映射。建议使用受控内网/VPN，当前协议未实现 CURVE 认证或加密。浏览器页面不能直接连接 ZeroMQ TCP，需要另加 WebSocket 桥接服务。本机 Unix 应用也可配置 `ipc:///tmp/marketpipe.sock`。
 
+## 按数据类型订阅与旧配置迁移
+
+| 数据类型 | Binance channel | 默认端口 | Python 示例 |
+|---|---|---|---|
+| 买卖一报价 `quote` | `bookTicker` | 5556 | `python examples/subscriber.py --kind quote` |
+| 原始逐笔成交 `trade` | `trade` | 5557 | `python examples/subscriber.py --kind trade` |
+| 聚合成交 `agg_trade` | `aggTrade` | 5558 | `python examples/subscriber.py --kind agg_trade` |
+| 状态心跳 `heartbeat` | 始终启用 | 5559 | `python examples/subscriber.py --kind heartbeat` |
+
+默认启用 `bookTicker` 和 `aggTrade`。如需全部行情类型，配置 `"channels": ["bookTicker", "trade", "aggTrade"]`；未启用的行情类型不会绑定端口。
+
+旧配置的 `zmq.endpoint` 改为 `zmq.endpoints`：
+
+```json
+"zmq": {
+  "endpoints": {
+    "quote": "tcp://127.0.0.1:5556",
+    "trade": "tcp://127.0.0.1:5557",
+    "agg_trade": "tcp://127.0.0.1:5558",
+    "heartbeat": "tcp://127.0.0.1:5559"
+  },
+  "send_hwm": 10000
+}
+```
+
+`endpoints` 可按 key 覆盖默认地址，各类型地址必须不同；Docker 中应使用 `0.0.0.0`，同时更新宿主机端口映射。
+旧 `endpoint` 字段会明确报错，避免静默连接到错误通道。原 `5556` 现在只发布 quote；原来从此端口接收成交、心跳的客户端必须改地址。
+
+JSON schema、topic 和每 topic 的序号规则保持不变。若同时消费多种类型，为每个类型创建独立 SUB socket 和处理循环，避免在消费者端再次共用接收队列。`--topic` 仍可筛选交易对；`--endpoint` 用于覆盖自定义部署地址。Node.js 对应 `ZMQ_KIND`、`ZMQ_TOPIC`、`ZMQ_ENDPOINT`。
+
 ## 架构与扩展点
 
 ```mermaid
 flowchart TD
-  A["币安 public：报价分片"] --> C["连接管理与解析"]
-  B["币安 market：成交分片"] --> C
-  C --> D["统一 Event + 有界队列"]
-  E["其他交易所 Adapter"] --> D
-  D --> F["专用线程：ZeroMQ PUB"]
-  F --> G["各应用 ZeroMQ SUB"]
+  A["按类型独立的上游 WebSocket"] --> R["按 Event.Kind 路由"]
+  R --> Q["quote 队列 + PUB :5556"]
+  R --> T["trade 队列 + PUB :5557"]
+  R --> G["agg_trade 队列 + PUB :5558"]
+  H["心跳定时器"] --> C["heartbeat 队列 + PUB :5559"]
 ```
+
+每类队列由自己的发布线程和 socket 消费，独立设置 libzmq HWM；不再经过共享的数据队列或全局序号锁。
+同一类型的不同交易对仍共用该类型的队列，序号仍按 topic 分配。所有类型共用一个进程 `instance`。
+仅为 `binance.channels` 启用的行情类型启动出口，心跳出口始终启动。任一出口绑定失败会清理已启动的出口并让进程启动失败。
+
 
 | 目录 | 职责 |
 |---|---|
 | `pkg/market` | 公共 Event、Quote、Trade、Sink、Adapter 接口 |
 | `internal/binance` | 币安分流、分片、字段校验与标准化 |
 | `internal/stream` | WebSocket 生命周期、心跳、重连与拨号限速 |
-| `internal/hub` | 序号、进程实例标识、有界队列与丢弃统计 |
-| `internal/publisher` | 固定 OS 线程持有 libzmq socket，JSON 二帧分发 |
+| `internal/hub` | 按类型路由、各类型独立序号锁/有界队列与丢弃统计 |
+| `internal/publisher` | 每类型独立线程/socket，统一启动、失败清理与排空 |
 | `internal/monitor` | 健康检查、分片状态、Prometheus 文本指标 |
 | `cmd/marketd` | 配置、组件装配、退出与排空 |
 | `cmd/subscriber`、`examples` | Go、Python、Node.js 消费示例 |
@@ -100,7 +134,7 @@ type Sink interface {
 }
 ```
 
-`Run` 内维护自己的连接/订阅，构造统一 Event 后调用 `sink.Emit(e)`；返回前必须退出并回收自己启动的 goroutine。可复用 `internal/stream.Manager`，如果该交易所需要登录、订阅 ACK 或其他心跳协议，可实现自己的连接管理。`Emit` 返回 false 表示入口队列满；不能从接入线程阻塞重试。传入的 Event 及其指针内容在提交后不得再修改。新适配器应只接受已配置的有限 topic，并为断线后的连接生成新的 `SourceSession`。
+`Run` 内维护自己的连接/订阅，构造统一 Event 后调用 `sink.Emit(e)`；返回前必须退出并回收自己启动的 goroutine。可复用 `internal/stream.Manager`，如果该交易所需要登录、订阅 ACK 或其他心跳协议，可实现自己的连接管理。`Emit` 返回 false 表示该类型入口队列满或类型未启用；不能从接入线程阻塞重试。传入的 Event 及其指针内容在提交后不得再修改。新适配器应使用已启用的 kind（未知/未启用的 kind 会被拒绝），并只接受已配置的有限 topic，并为断线后的连接生成新的 `SourceSession`。
 
 ## 连接稳定性
 
@@ -174,7 +208,7 @@ type Sink interface {
 | `receive_time_ns` | 网关完成 WebSocket ReadMessage 时的本机 Unix 纳秒时间 |
 | 价格、数量 | 原样十进制字符串，无 float64 转换 |
 
-ZeroMQ 使用前缀订阅。订阅 `md.v1.binance.usdm.` 接收全部 U 本位行情；订阅 `md.v1.binance.usdm.BTCUSDT.` 接收该交易对全部类型；完整 topic 最后的 `|` 用于准确限定一个类型。没有跨连接/跨 topic 的全局事件时间排序；同一上游 stream 只属于一个分片，服务保留该 stream 到达队列的次序。
+ZeroMQ 使用前缀订阅。在所连接的类型出口上，订阅 `md.v1.binance.usdm.` 接收该类型的全部 U 本位行情；订阅 `md.v1.binance.usdm.BTCUSDT.` 接收该类型的 BTCUSDT 行情；完整 topic 最后的 `|` 用于准确限定一个类型。没有跨连接/跨 topic 的全局事件时间排序；同一上游 stream 只属于一个分片，服务保留该 stream 到达队列的次序。
 
 Node.js 对 seq、纳秒时间使用 BigInt，价格用十进制库；Python 可使用 int 和 Decimal。跨机计算延迟前需要校准主机时钟；`receive_time_ns` 不是内核网卡时间戳。
 
@@ -182,14 +216,14 @@ Node.js 对 seq、纳秒时间使用 BigInt，价格用十进制库；Python 可
 
 **ZeroMQ PUB/SUB 是实时广播，不是可靠消息队列。**
 
-1. Go 入口队列默认 32768 条，满时丢弃新到达事件并增加 `marketpipe_ingress_dropped_total`。不会阻塞 WS 读取，也不会无限增长内存。序号先分配再入队，后续同 topic 事件可显示缺口。
+1. 每个启用类型的 Go 入口队列默认 32768 条（`queue_capacity` 是每类型容量），满时仅丢弃该类型新到达事件并增加 `marketpipe_ingress_dropped_total`。报价积压不占用成交或心跳队列。总队列容量为启用类型数（含心跳）× `queue_capacity`。不会阻塞 WS 读取，也不会无限增长内存。序号先分配再入队，后续同 topic 事件可显示缺口。
 2. libzmq 的 SNDHWM 默认每订阅者 10000 条。慢订阅者队列满后，PUB 丢弃发给该订阅者的消息，不等待它；其他订阅者继续接收。实际队列容量受 libzmq/TCP 缓冲影响，HWM 不是严格的字节内存上限，总内存也随订阅者数量变化。
 3. PUB 的 send 成功只表示调用成功，不能证明任何订阅者收到，也不能统计 libzmq 对每个慢订阅者的丢弃。因此指标叫 `publish_calls_total`，不会把它写成“送达数”。
 4. 首次订阅有 slow joiner 窗口；新订阅者没有历史快照或 replay；断线期间不补发。首次消息之前、最后一条消息之后的缺失无法仅凭 seq 检测。
 5. seq 检测的是网关入口以后的缺口；上游断线期间根本没接到的数据不会占用 seq。必须结合 `source_session`、心跳与行情时间检查。报价的源 update ID 不能要求逐个 +1；本项目不自动按源 ID 去重或推断所有上游缺口。
 6. 序号跳变或源连接改变时，报价消费者应暂时标记不新鲜，等待新报价；成交统计消费者应记录不完整区间。如果需要完整成交日志，需要额外设计 WAL/持久化、补数和 ACK/replay，保留 ZeroMQ 作为实时出口。
 
-每秒还有 `md.v1.system.gateway.ALL.heartbeat|`，包含各分片连接状态。示例同时订阅此 topic。心跳也经过有界队列并可能丢失，不是可靠控制通道。实际策略应按每个 symbol 的最后到达时间设置超时，并在网关重启、上游重连和数据缺口时执行自己的降级逻辑。
+每秒还有 `md.v1.system.gateway.ALL.heartbeat|`，包含各分片连接状态，只从独立心跳出口发布。通过 `--kind heartbeat`（Go 为 `-kind`，Node.js 为 `ZMQ_KIND`）单独订阅。示例每次仅订阅一种类型，不再把心跳混入行情 socket。心跳也经过自己的有界队列并可能丢失，不是可靠控制通道。行情类型没有消息不等于网关故障，可结合心跳和 HTTP 健康检查判断。实际策略应按每个 symbol 的最后到达时间设置超时，并在网关重启、上游重连和数据缺口时执行自己的降级逻辑。
 
 ## 运维与测试
 
@@ -205,9 +239,11 @@ go vet ./...
 go test ./internal/binance -run '^$' -bench BenchmarkDecodeQuote -benchmem
 ```
 
-`/healthz` 只检查进程 HTTP 存活。`/readyz` 要求发布端已绑定，且每个分片已连接并在本次连接收到至少一个有效事件；**不保证每个交易对都有新行情**，也不保证消费者收到消息。`/status` 展示各分片最后事件时间、连接标识与错误。生产上应针对连接 down、持续入口丢弃、队列积压和行情陈旧建立监控。日志是结构化 JSON，不打印每条 tick。
+`/healthz` 只检查进程 HTTP 存活。`/readyz` 要求所有启用类型的发布端均已绑定，且每个分片已连接并在本次连接收到至少一个有效事件；**不保证每个交易对都有新行情**，也不保证消费者收到消息。`/status` 展示各分片最后事件时间、连接标识与错误。生产上应针对连接 down、持续入口丢弃、队列积压和行情陈旧建立监控。日志是结构化 JSON，不打印每条 tick。
 
-测试覆盖精度、主动方向、错误载荷、端点路由、分片、并发序号、队列溢出、静默连接超时、Pong 保活、定时换连接和 Python 跨进程互通。没有 pyzmq 时互通测试会明确 skip；CI 会安装它。`.github/workflows/test.yml` 提供 Linux/macOS 的 race、vet、build 和 TCP 互通测试，随项目提供但本次没有触发远程 CI。
+新增 `marketpipe_channel_*{kind="quote|trade|agg_trade|heartbeat"}` 指标分别展示各类型的 received、ingress_dropped、publish_calls、publisher_errors、queue_length 与 publisher_up（kind 标签实际为单个类型值）；原有无标签总量指标保留。各类型的队列和 socket 隔离，但仍共享进程 CPU、内存和网络资源。
+
+测试覆盖类型隔离、单类队列溢出不影响其他类型、并发路由与顺序、全部出口排空、取消退出、部分绑定失败清理、精度、主动方向、错误载荷、端点路由、分片、并发序号、队列溢出、静默连接超时、Pong 保活、定时换连接和 Python 跨进程互通。没有 pyzmq 时互通测试会明确 skip；CI 会安装它。`.github/workflows/test.yml` 提供 Linux/macOS 的 race、vet、build 和 TCP 互通测试，随项目提供但本次没有触发远程 CI。
 
 受限环境可执行 `MARKETPIPE_TEST_TRANSPORT=ipc go test -race ./...`，只把 ZeroMQ 互通测试切换为本机 IPC；模拟上游仍使用本机 WebSocket。它不能替代真实部署环境的 TCP 与币安实盘验收。具体本次执行记录见 `VALIDATION.md`。
 
